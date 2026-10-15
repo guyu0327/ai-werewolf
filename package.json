@@ -1,0 +1,25 @@
+{
+  "name": "ai-werewolf",
+  "version": "0.1.0",
+  "description": "AI 狼人杀：1 个真人 + 多个 AI 智能体同桌玩狼人杀",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dev:web": "npm --prefix web run dev",
+    "dev:server": "cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8321",
+    "build:web": "npm --prefix web run build",
+    "build:server": "cd backend && python -m PyInstaller -y --clean -n server --distpath dist --workpath build/pyinstaller --collect-all uvicorn run_server.py",
+    "test:server": "cd backend && python -m pytest tests/ -q",
+    "dist:dir": "npm run build:web && npm run build:server && electron-builder --win --dir",
+    "dist": "npm run build:web && npm run build:server && electron-builder --win",
+    "dist:mac:dir": "electron-builder --mac --dir",
+    "dist:mac": "electron-builder --mac"
+  },
+  "author": "lixiao",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^33.3.1",
+    "electron-builder": "^26.15.3"
+  }
+}

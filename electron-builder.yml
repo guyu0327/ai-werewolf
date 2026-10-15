@@ -1,0 +1,35 @@
+appId: com.lixiao.aiwerewolf
+productName: AIWerewolf
+directories:
+  output: dist
+# 只打包壳代码；backend 源码副本与前端产物经 extraResources 放到安装目录（asar 内文件 Python 读不到）
+files:
+  - main.js
+  - preload.js
+  - boot.html
+  - package.json
+  - build/icon.png
+extraResources:
+  # 后端：优先 PyInstaller 产物（server.exe，目标机器免 Python），源码副本兜底（开发机有 Python 时也可跑）
+  # 冻结态 main.py 的 PROJECT_ROOT=exe目录/.. 恰好指向 resources/，前端产物在 resources/web/dist
+  - from: backend/dist/server
+    to: server
+  - from: backend
+    to: server
+    filter:
+      - app/**
+      - requirements.txt
+  - from: web/dist
+    to: web/dist
+  - from: build/icon.ico
+    to: icon.ico
+  - from: build/icon.png
+    to: icon.png
+# 应用图标来自 build/icon.ico，经 rcedit 写入 exe（无签名证书，不会执行签名步骤）
+nsis:
+  # 向导式安装：用户可选安装位置（仍为按用户安装，不需要管理员权限）
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  deleteAppDataOnUninstall: false
+  artifactName: ${name}-setup-${version}.${ext}

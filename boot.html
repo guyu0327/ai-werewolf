@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI 狼人杀</title>
+</head>
+<body style="font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #14111f; color: #eae6f2;">
+  <!-- Windows 下原生标题栏被隐藏（main.js titleBarOverlay），自绘同款弱化标题条；整条可拖动窗口 -->
+  <div id="titlebar" style="display: none; position: fixed; top: 0; left: 0; right: 0; height: 32px; align-items: center; gap: 8px; padding-left: 10px; background: #1c1733; -webkit-app-region: drag; z-index: 10;">
+    <span style="font-size: 12px; color: rgba(234, 230, 242, 0.45); user-select: none;">🌙 AI 狼人杀</span>
+  </div>
+  <script>
+    if (navigator.userAgent.includes('Windows')) document.getElementById('titlebar').style.display = 'flex'
+  </script>
+  <div style="text-align: center;">
+    <h2 style="color: #e2be76; text-shadow: 0 0 18px rgba(226, 190, 118, 0.4);">🌙 AI 狼人杀</h2>
+    <p style="opacity: .6;">正在启动游戏服务…</p>
+  </div>
+</body>
+</html>
