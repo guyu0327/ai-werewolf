@@ -12,6 +12,16 @@ interface SnapshotData {
   active: boolean
 }
 
+// 实时流只保留最近 N 条：DOM 与重渲染成本有界，完整历史走复盘弹窗（后端全量事件）
+const FEED_CAP = 400
+
+// 流式 delta 合并：上帝观战投票阶段 12 路并行思考逐 token 推送，逐条渲染会打满渲染进程。
+// delta 先入缓冲，定时批量落 store（渲染频率钉死在 ~16/s）；任何非 delta 事件先同步冲刷保证顺序
+const DELTA_FLUSH_MS = 60
+let speechDeltaBuf = ''
+const thinkDeltaBuf = new Map<number, string>()
+let deltaTimer: number | null = null
+
 export const useGameStore = defineStore('game', {
   state: () => ({
     state: null as GameState | null,
@@ -40,6 +50,46 @@ export const useGameStore = defineStore('game', {
   },
 
   actions: {
+    trimFeed() {
+      if (this.feed.length > FEED_CAP) this.feed.splice(0, this.feed.length - FEED_CAP)
+    },
+
+    dropDeltaBuf() {
+      if (deltaTimer != null) {
+        clearTimeout(deltaTimer)
+        deltaTimer = null
+      }
+      speechDeltaBuf = ''
+      thinkDeltaBuf.clear()
+    },
+
+    scheduleDeltaFlush() {
+      if (deltaTimer != null) return
+      deltaTimer = window.setTimeout(() => {
+        deltaTimer = null
+        this.flushDeltas()
+      }, DELTA_FLUSH_MS)
+    },
+
+    flushDeltas() {
+      if (deltaTimer != null) {
+        clearTimeout(deltaTimer)
+        deltaTimer = null
+      }
+      if (speechDeltaBuf) {
+        const item = this.feed.find((f) => f.id === this.streamingKey)
+        if (item) item.text += speechDeltaBuf
+        speechDeltaBuf = ''
+      }
+      if (thinkDeltaBuf.size) {
+        for (const [seat, text] of thinkDeltaBuf) {
+          const t = this.feed.find((f) => f.kind === 'thinking' && f.seat === seat && f.streaming)
+          if (t) t.text += text
+        }
+        thinkDeltaBuf.clear()
+      }
+    },
+
     async connect(gid: string) {
       this.disconnect()
       const controller = new AbortController()
@@ -69,6 +119,7 @@ export const useGameStore = defineStore('game', {
       this.pending = null
       this.paused = null
       this.streamingKey = ''
+      this.dropDeltaBuf()
     },
 
     reset() {
@@ -109,9 +160,12 @@ export const useGameStore = defineStore('game', {
           this.feed.push(item)
         }
       }
+      this.trimFeed()
     },
 
     applyEvent(event: string, data: Record<string, any>) {
+      // 非 delta 事件先同步冲刷缓冲的文本增量，保证「delta → 收口/替换」的顺序语义
+      if (event !== 'speech_delta' && event !== 'thinking_delta') this.flushDeltas()
       switch (event) {
         case 'phase_change': {
           if (this.state) {
@@ -136,11 +190,12 @@ export const useGameStore = defineStore('game', {
             text: '',
             streaming: true,
           })
+          this.trimFeed()
           return
         }
         case 'speech_delta': {
-          const item = this.feed.find((f) => f.id === this.streamingKey)
-          if (item) item.text += data.text
+          speechDeltaBuf += data.text
+          this.scheduleDeltaFlush()
           return
         }
         case 'await_input': {
@@ -150,17 +205,20 @@ export const useGameStore = defineStore('game', {
         }
         case 'vote_pending': {
           const waiting = this.feed.find((f) => f.kind === 'voteLive' && f.seat === data.seat && f.streaming)
-          if (!waiting)
+          if (!waiting) {
             this.feed.push({ id: feedId(), kind: 'voteLive', seat: data.seat, name: data.name, text: '', streaming: true })
+            this.trimFeed()
+          }
           return
         }
         case 'thinking_start': {
           this.feed.push({ id: feedId(), kind: 'thinking', seat: data.seat, name: data.name, text: '', streaming: true })
+          this.trimFeed()
           return
         }
         case 'thinking_delta': {
-          const t = this.feed.find((f) => f.kind === 'thinking' && f.seat === data.seat && f.streaming)
-          if (t) t.text += data.text
+          thinkDeltaBuf.set(data.seat, (thinkDeltaBuf.get(data.seat) ?? '') + data.text)
+          this.scheduleDeltaFlush()
           return
         }
         case 'thinking_end': {
@@ -184,6 +242,7 @@ export const useGameStore = defineStore('game', {
         }
         case 'error': {
           this.feed.push({ id: feedId(), kind: 'system', text: data.message ?? '发生错误' })
+          this.trimFeed()
           return
         }
         default:
@@ -225,7 +284,10 @@ export const useGameStore = defineStore('game', {
           item.avatar = p.avatar
         }
       }
-      if (item) this.feed.push(item)
+      if (item) {
+        this.feed.push(item)
+        this.trimFeed()
+      }
       if (event === 'game_over' && this.state) {
         this.state.phase = 'game_over'
         this.state.winner = data.winner

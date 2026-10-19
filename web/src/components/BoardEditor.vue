@@ -28,7 +28,10 @@ const error = computed(() => {
   if (total.value < 5 || total.value > 12) return '人数需在 5~12 之间'
   if (counts.value.werewolf < 1) return '至少 1 名狼人'
   if (counts.value.werewolf >= total.value) return '狼人不能占满全场'
-  if (winCondition.value === 'side' && counts.value.villager + counts.value.idiot < 1) return '屠边局至少 1 名村民或白痴'
+  if (winCondition.value === 'side') {
+    const gods = counts.value.seer + counts.value.witch + counts.value.hunter + counts.value.idiot + counts.value.guard
+    if (gods < 1 || counts.value.villager < 1) return '屠边局神职侧与村民侧都至少 1 名（白痴算神职）'
+  }
   return ''
 })
 

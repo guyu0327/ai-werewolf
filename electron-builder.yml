@@ -33,3 +33,7 @@ nsis:
   perMachine: false
   deleteAppDataOnUninstall: false
   artifactName: ${name}-setup-${version}.${ext}
+mac:
+  # Mac 包必须在 macOS 上构建（PyInstaller 不能交叉编译，dist:mac 会先产出 mac 版 server 再打包）
+  target: dmg
+  category: public.app-category.games

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Avatar from '@/components/common/Avatar.vue'
 import type { FeedItem } from '@/utils/feed'
 import type { PublicPlayer } from '@/api/game'
@@ -26,12 +26,36 @@ async function scrollToBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-watch(() => props.feed.length, scrollToBottom, { deep: false })
+// 高频 delta（并行思考/流式发言）下强制滚动会逐条 reflow 巨型列表，节流到 100ms 并保证尾部补一次
+let lastScrollAt = 0
+let scrollTimer: number | null = null
+
+function scheduleScroll() {
+  if (!stickToBottom.value) return
+  const now = performance.now()
+  const gap = now - lastScrollAt
+  if (gap >= 100) {
+    lastScrollAt = now
+    void nextTick().then(scrollToBottom)
+  } else if (scrollTimer == null) {
+    scrollTimer = window.setTimeout(() => {
+      scrollTimer = null
+      lastScrollAt = performance.now()
+      void nextTick().then(scrollToBottom)
+    }, 100 - gap)
+  }
+}
+
+onBeforeUnmount(() => {
+  if (scrollTimer != null) clearTimeout(scrollTimer)
+})
+
+watch(() => props.feed[props.feed.length - 1]?.id, scheduleScroll)
 
 // 流式发言过程中也持续吸底
 watch(
-  () => props.feed.map((f) => f.text.length).reduce((a, b) => a + b, 0),
-  scrollToBottom,
+  () => props.feed.reduce((a, f) => a + f.text.length, 0),
+  scheduleScroll,
 )
 
 function playerOf(seat?: number): PublicPlayer | undefined {
@@ -39,11 +63,15 @@ function playerOf(seat?: number): PublicPlayer | undefined {
   return props.players.find((p) => p.seat === seat)
 }
 
-// 发言里的座位指代（如「11号」）切成可读徽章：带头像与名字，防止 1 号把 11 号误读成自己
+// 发言里的座位指代（如「11号」）切成可读徽章：带头像与名字，防止 1 号把 11 号误读成自己。
+// 模板每个渲染周期对每条发言重新调用，加缓存避免长对局里每个 delta 都重切全部历史发言
 type Seg = string | { seat: number }
 const seatRe = /(\d{1,2})号/g
+const tokenCache = new Map<string, Seg[]>()
 
 function tokenize(text: string): Seg[] {
+  const hit = tokenCache.get(text)
+  if (hit) return hit
   const segs: Seg[] = []
   let last = 0
   for (const m of text.matchAll(seatRe)) {
@@ -55,6 +83,8 @@ function tokenize(text: string): Seg[] {
     last = idx + m[0].length
   }
   if (last < text.length) segs.push(text.slice(last))
+  if (tokenCache.size >= 1000) tokenCache.clear()
+  tokenCache.set(text, segs)
   return segs
 }
 
@@ -78,7 +108,7 @@ function tagClass(tag?: string): string {
 // 身份配色：与牌桌角色牌同色系；role 为 null（玩家视角未亮牌）返回空串保持默认色
 function roleClass(role: string | null): string {
   if (role === 'werewolf') return 'wolf'
-  if (role === 'villager' || role === 'idiot') return 'villager'
+  if (role === 'villager') return 'villager'
   return role ? 'god' : ''
 }
 

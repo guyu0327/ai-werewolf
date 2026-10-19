@@ -1300,6 +1300,105 @@ class FirstOnlySwallowLlm(FakeLlm):
         return await super().decide(preset, messages, schema, on_thinking)
 
 
+class ExplodeAskCountLlm(ClaimExplodeLlm):
+    """仅2号发言报3号查杀；记录各座位自爆权衡询问（触发/回合内分开计），验证同阶段只权衡一次。"""
+
+    def __init__(self):
+        super().__init__(explode_on_trigger=False)
+        self.trigger_asks: list[int] = []
+        self.turn_asks: list[int] = []
+
+    @staticmethod
+    def _seat_of(messages: list) -> int:
+        m = re.search(r"你的座位是 (\d+)号", "\n".join(str(x.get("content", "")) for x in messages))
+        return int(m.group(1)) if m else 0
+
+    async def decide(self, preset, messages, schema, on_thinking=None):
+        if schema is SelfExplodeDecision:
+            seat = self._seat_of(messages)
+            (self.trigger_asks if "刚结束的" in str(messages[-1]["content"]) else self.turn_asks).append(seat)
+        return await super().decide(preset, messages, schema, on_thinking)
+
+    async def speak(self, preset, messages, on_thinking=None):
+        if self._seat_of(messages) == 2:
+            yield "我昨晚查验了3号，他是狼人，铁查杀，今天归票3号。"
+        else:
+            yield "大家好，我先听一听。"
+
+
+@pytest.mark.asyncio
+async def test_triggered_wolf_skips_own_turn_explode_ask(tmp_path):
+    """被查杀触发权衡过的狼，同一阶段自己发言回合不再重复询问；未被触发的狼照常询问。"""
+    llm = ExplodeAskCountLlm()
+    runner = make_runner(tmp_path, llm)
+    game = _day_game([Role.VILLAGER, Role.WEREWOLF, Role.WEREWOLF, Role.VILLAGER, Role.SEER, Role.WITCH])
+    runner.store.save_game(game)
+
+    task = asyncio.create_task(runner._phase_day_speech(game))
+    # 真人发言回合到达时喂一条无查杀的发言
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        info = runner.pending_info(game.id)
+        if info and info["kind"] == "speech":
+            ok, msg = runner.submit(game.id, {"kind": "speech", "text": "大家好，我先听一听。"})
+            assert ok, msg
+            break
+    await asyncio.wait_for(task, 10)
+
+    assert llm.trigger_asks == [3]  # 2号发言查杀3号 → 3号被触发权衡（仅此一次）
+    assert llm.turn_asks == [2]  # 2号回合内常规询问照常；3号回合内被跳过
+
+
+class LastWolfProbeLlm(FakeLlm):
+    """5号发言报2号（场上唯一存活狼）查杀；统计2号被询问自爆的次数（回合内+触发）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.asks = 0
+
+    @staticmethod
+    def _seat_of(messages: list) -> int:
+        m = re.search(r"你的座位是 (\d+)号", "\n".join(str(x.get("content", "")) for x in messages))
+        return int(m.group(1)) if m else 0
+
+    async def decide(self, preset, messages, schema, on_thinking=None):
+        if schema is SelfExplodeDecision:
+            self.asks += 1
+            return SelfExplodeDecision(explode=True)  # 一旦被询问必爆：以「从未询问」断言兜底
+        return await super().decide(preset, messages, schema, on_thinking)
+
+    async def speak(self, preset, messages, on_thinking=None):
+        if self._seat_of(messages) == 5:
+            yield "我昨晚查验了2号，他是狼人，铁查杀，今天归票2号。"
+        else:
+            yield "大家好，我先听一听。"
+
+
+@pytest.mark.asyncio
+async def test_last_wolf_never_asked_to_explode(tmp_path):
+    """场上只剩一匹 AI 狼：回合内与被查杀触发都不询问自爆（自爆 = 0 狼当场好人胜）。"""
+    llm = LastWolfProbeLlm()
+    runner = make_runner(tmp_path, llm)
+    game = _day_game([Role.VILLAGER, Role.WEREWOLF, Role.VILLAGER, Role.SEER, Role.WITCH, Role.VILLAGER])
+    runner.store.save_game(game)
+
+    task = asyncio.create_task(runner._phase_day_speech(game))
+    # 真人发言回合到达时喂一条无查杀的发言
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        info = runner.pending_info(game.id)
+        if info and info["kind"] == "speech":
+            ok, msg = runner.submit(game.id, {"kind": "speech", "text": "大家好，我先听一听。"})
+            assert ok, msg
+            break
+    await asyncio.wait_for(task, 10)
+
+    assert llm.asks == 0  # 2号（独狼）回合内不被询问；5号发言查杀2号也不触发
+    assert game.phase == Phase.VOTE
+    assert game.player(2).alive and not game.player(2).role_revealed
+    assert not any(e.type == "wolf_explode" for e in game.events)
+
+
 @pytest.mark.asyncio
 async def test_claim_triggers_ai_wolf_explode(tmp_path):
     """AI 发言报查杀点名 AI 狼 → 被点名者在他人回合自爆：翻牌死亡、白天直接入夜。"""
@@ -1504,7 +1603,7 @@ async def test_explode_sheriff_badge_flow(tmp_path):
 
 
 def _election_game(roles: list[Role], gid: str = "swallow", swallow: str = "single", revote: bool = False) -> Game:
-    """手工构造警长竞选阶段的对局（全 AI，无真人）：1、3 号狼，单数位上警。"""
+    """手工构造警长竞选阶段的对局（全 AI，无真人）：1、3、5 号狼，单数位上警。"""
     players = [Player(seat=i, name=f"P{i}", role=r, is_human=False, preset_id="p1") for i, r in enumerate(roles, start=1)]
     board = BoardConfig(id="t", name="测试板", win_condition=WinCondition.CITY, roles=roles)
     game = Game(id=gid, created_at="", board=board, players=players, seed=1)
@@ -1517,7 +1616,16 @@ def _election_game(roles: list[Role], gid: str = "swallow", swallow: str = "sing
     return game
 
 
-_SWALLOW_ROLES = [Role.WEREWOLF, Role.VILLAGER, Role.WEREWOLF, Role.VILLAGER, Role.SEER, Role.WITCH]
+# 三狼配置：双爆两枪打完仍留一狼，末狼不再自爆的闸门不干扰吞警徽机制验证
+_SWALLOW_ROLES = [
+    Role.WEREWOLF,
+    Role.VILLAGER,
+    Role.WEREWOLF,
+    Role.VILLAGER,
+    Role.WEREWOLF,
+    Role.SEER,
+    Role.WITCH,
+]
 
 
 @pytest.mark.asyncio

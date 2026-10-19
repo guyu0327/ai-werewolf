@@ -103,16 +103,23 @@ function saveClosePref(v) {
   } catch { /* 写不进去就本次会话内生效 */ }
 }
 
-/** 后端解释器：开发态直接用系统 Python + 源码；打包态优先 resources/server/server.exe（pyinstaller 产物），否则 resources/server 下的源码副本 */
+/** 后端解释器：开发态优先 backend/.venv（uv venv / python -m venv 产物结构一致），兜底系统 Python；
+ *  打包态优先 resources/server 下的 PyInstaller 产物（win: server.exe / mac: server），否则源码副本 */
 function backendCommand() {
   if (app.isPackaged) {
-    const exe = path.join(RESOURCE_ROOT, 'server', 'server.exe')
+    const base = path.join(RESOURCE_ROOT, 'server')
+    const exe = path.join(base, process.platform === 'win32' ? 'server.exe' : 'server')
     if (fs.existsSync(exe)) return { cmd: exe, args: [] }
   }
   // 打包态 __dirname 在 app.asar 内，Python 无法读取，源码副本与前端产物都在 resources/server 下
   const entry = app.isPackaged ? path.join(RESOURCE_ROOT, 'server') : path.join(__dirname, 'backend')
+  // 绝对路径直取 .venv 解释器：绕开 PATH 污染（mac 的 python3 常是 Xcode 桩，无 pip 无依赖）
+  const venvPython = process.platform === 'win32'
+    ? path.join(entry, '.venv', 'Scripts', 'python.exe')
+    : path.join(entry, '.venv', 'bin', 'python')
+  const cmd = fs.existsSync(venvPython) ? venvPython : process.platform === 'win32' ? 'python' : 'python3'
   return {
-    cmd: process.platform === 'win32' ? 'python' : 'python3',
+    cmd,
     args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(backendPort), '--log-level', 'warning'],
     cwd: entry,
   }
@@ -131,10 +138,28 @@ async function startBackend() {
   // windowsHide：打包态 server.exe 是控制台子系统程序，不设会在前台闪黑窗
   backend = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   backend.stdout.on('data', (d) => process.stdout.write(`[server] ${d}`))
-  backend.stderr.on('data', (d) => process.stderr.write(`[server] ${d}`))
+  let errTail = ''
+  backend.stderr.on('data', (d) => {
+    errTail = (errTail + d.toString()).slice(-2000)
+    process.stderr.write(`[server] ${d}`)
+  })
   backend.on('exit', (code) => {
     if (!quitting) {
-      dialog.showErrorBox('服务异常', `后端服务意外退出（code=${code}），应用即将关闭。`)
+      // 依赖缺失是新手最常踩的坑（尤其 mac 系统无 pip）：给可操作的指引，而不是一句「意外退出」
+      if (/No module named/.test(errTail)) {
+        dialog.showErrorBox(
+          '后端依赖未安装',
+          '后端 Python 环境缺少依赖，无法启动。\n\n' +
+            '开发者：在项目根目录执行\n' +
+            '  cd backend\n' +
+            '  uv venv --python 3.12\n' +
+            '  uv pip install -r requirements.txt\n' +
+            '然后重新启动应用（无 uv 时可用 python3 -m venv .venv 替代，详见 README）。\n\n' +
+            '普通用户：请直接使用安装包（内置后端，无需 Python 环境）。'
+        )
+      } else {
+        dialog.showErrorBox('服务异常', `后端服务意外退出（code=${code}），应用即将关闭。`)
+      }
       app.quit()
     }
   })

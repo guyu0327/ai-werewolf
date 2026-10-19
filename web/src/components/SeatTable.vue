@@ -50,7 +50,7 @@ function onClick(p: Placed) {
 
 function roleClass(role: string | null): string {
   if (role === 'werewolf') return 'wolf'
-  if (role === 'villager' || role === 'idiot') return 'villager'
+  if (role === 'villager') return 'villager'
   return 'god'
 }
 </script>

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..models import BoardConfig, Role, Settings, WinCondition
+from ..models import GOD_ROLES, BoardConfig, Role, Settings, WinCondition
 
 BUILTIN_BOARDS: list[BoardConfig] = [
     BoardConfig(
@@ -104,8 +104,11 @@ def validate_board(roles: list[Role], win_condition: WinCondition, max_days: int
         raise ValueError("白痴最多 1 名")
     if roles.count(Role.GUARD) > 1:
         raise ValueError("守卫最多 1 名")
-    if win_condition == WinCondition.SIDE and roles.count(Role.VILLAGER) + roles.count(Role.IDIOT) < 1:
-        raise ValueError("屠边局至少要有 1 名村民或白痴")
+    if win_condition == WinCondition.SIDE:
+        # 神民两侧开局都得有活口，否则该侧天然达成屠边（白痴算神职侧）
+        gods = sum(roles.count(r) for r in GOD_ROLES)
+        if gods < 1 or roles.count(Role.VILLAGER) < 1:
+            raise ValueError("屠边局神职侧与村民侧都至少要有 1 名（白痴算神职）")
 
 
 def build_custom_board(board_id: str, name: str, roles: list[Role], win_condition: WinCondition, max_days: int) -> BoardConfig:

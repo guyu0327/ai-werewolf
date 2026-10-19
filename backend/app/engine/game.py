@@ -105,8 +105,8 @@ def check_win(game: Game) -> str | None:
         if len(wolves) >= len(good):
             return "wolf"
     else:
-        gods = [p for p in good if p.role in GOD_ROLES]
-        villagers = [p for p in good if p.role not in GOD_ROLES]  # 村民+白痴同属民桶
+        gods = [p for p in good if p.role in GOD_ROLES]  # 白痴属神职（翻牌免死后存活同样算）
+        villagers = [p for p in good if p.role not in GOD_ROLES]
         if not gods or not villagers:
             return "wolf"
     return None

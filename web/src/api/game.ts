@@ -52,6 +52,8 @@ export interface GameMeta {
   mode: 'normal' | 'god'
   winner: string | null
   end_reason: string
+  has_summary: boolean
+  summary_running: boolean
   players: { seat: number; name: string; avatar: string; is_human: boolean; alive: boolean }[]
 }
 

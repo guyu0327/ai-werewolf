@@ -116,7 +116,11 @@ def create_game(request: Request, body: CreateGameRequest):
 
 @router.get("")
 def list_games(request: Request):
-    return ctx(request).store.list_game_meta()
+    metas = ctx(request).store.list_game_meta()
+    runner = ctx(request).runner
+    for m in metas:
+        m["summary_running"] = runner.summary_status(m["id"]) == "running"
+    return metas
 
 
 @router.get("/{gid}")

@@ -14,7 +14,7 @@ const props = defineProps<{
 const roleLabel = computed(() => (props.role ? ROLE_LABELS[props.role] ?? props.role : '未知'))
 const roleClass = computed(() => {
   if (props.role === 'werewolf') return 'wolf'
-  if (props.role === 'villager' || props.role === 'idiot') return 'villager'
+  if (props.role === 'villager') return 'villager'
   return 'god'
 })
 </script>

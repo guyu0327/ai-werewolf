@@ -213,19 +213,31 @@ def test_apply_self_explode():
     assert not g.player(wolf.seat).vote_lost
 
 
-def test_check_win_side_idiot_in_villager_bucket():
+def test_check_win_side_idiot_in_god_bucket():
     g = make_game(twelve_board(), n=12)
     start_game(g)
     assert sorted(p.role.value for p in g.players) == sorted(r.value for r in g.board.roles)
-    # 村民全灭，存活 4狼+预言家+翻牌白痴：神职与民桶各有活人，未达成屠边
+    # 预女猎全灭但翻牌白痴存活：白痴属神职，撑住神桶，未达成屠边
+    for p in g.players:
+        if p.role in (Role.SEER, Role.WITCH, Role.HUNTER):
+            p.alive = False
+    idiot = next(p for p in g.players if p.role == Role.IDIOT)
+    apply_exile(g, idiot.seat)
+    assert check_win(g) is None
+    # 白痴再出局：神桶空，屠边狼胜
+    idiot.alive = False
+    assert check_win(g) == "wolf"
+
+
+def test_check_win_side_villagers_extinct_wolf_win():
+    g = make_game(twelve_board(), n=12)
+    start_game(g)
+    # 村民全灭：即使预言家+翻牌白痴还活着，民侧灭绝即屠边狼胜
     for p in g.players:
         if p.role == Role.VILLAGER:
             p.alive = False
     idiot = next(p for p in g.players if p.role == Role.IDIOT)
     apply_exile(g, idiot.seat)
-    assert check_win(g) is None
-    # 白痴再出局：民桶空，屠边狼胜
-    idiot.alive = False
     assert check_win(g) == "wolf"
 
 
@@ -242,8 +254,22 @@ def test_validate_twelve_board():
         assert False, "双白痴应报错"
     except ValueError:
         pass
-    # 屠边局没有村民但有白痴：白痴算民桶，合法
-    validate_board([Role.WEREWOLF, Role.SEER, Role.WITCH, Role.HUNTER, Role.IDIOT], WinCondition.SIDE, 20)
+    # 屠边局没有村民：白痴算神职也补不上民桶，非法
+    try:
+        validate_board([Role.WEREWOLF, Role.SEER, Role.WITCH, Role.HUNTER, Role.IDIOT], WinCondition.SIDE, 20)
+        assert False, "屠边局村民侧为空应报错"
+    except ValueError:
+        pass
+    # 屠边局只有白痴做神职：两侧各有人，合法
+    validate_board(
+        [Role.WEREWOLF, Role.WEREWOLF, Role.VILLAGER, Role.VILLAGER, Role.IDIOT], WinCondition.SIDE, 20
+    )
+    # 屠边局神职侧为空（纯民+狼）：非法
+    try:
+        validate_board([Role.WEREWOLF, Role.WEREWOLF, Role.VILLAGER, Role.VILLAGER], WinCondition.SIDE, 20)
+        assert False, "屠边局神职侧为空应报错"
+    except ValueError:
+        pass
 
 
 # ---------- 守卫 ----------
@@ -402,8 +428,8 @@ def test_render_history_layered_compression():
     assert "守卫请睁眼" not in text and "预言家请睁眼" not in text  # 垫话丢弃
     assert "我觉得1号很可疑" not in text  # 老发言丢弃
     assert "（第 1 天白天众人依次发言，内容从略）" in text
-    assert "放逐 5号（村民）" in text and "平票，无人出局" in text  # 结局摘要保留
-    assert "2号→5号" not in text  # 老票型明细丢弃
+    assert "5号被放逐出局，翻牌是：【村民】" in text and "平票，无人出局" in text  # 老昼夜投票结果保留
+    assert "2号→5号" in text  # 老票型明细不压缩：跨天票型供同票对/警长归票复盘分析
     assert "4号→3号" in text and "【预言家】" in text  # 前一昼夜票型明细与结局完整
     assert "（第 3 天白天众人依次发言，内容从略）" in text  # 前一昼夜发言仍按既有规则从略
 
@@ -471,7 +497,7 @@ def test_strategy_injection():
     vt = vote_messages(game, villager, [2, 3, 4])[1]["content"]
     assert "身份判断" not in vt and "示例" not in vt  # 投票请求不注入，保持精简
     assert "割席" not in vt  # 好人投票不含狼队纪律
-    assert "替指控者背书" in vt  # 无据指控不跟票
+    assert "无据指控不构成跟票理由" in vt  # 无据指控不跟票（与 system 证据纪律呼应，不重复展开）
     assert "分票" in vt  # 好人防分票收敛纪律
     assert "冲锋狼" in vt  # 好人投票注入狼型识别
     assert "身份背书" in vt  # 警长头衔不是身份背书，接徽狼防盲从
@@ -622,13 +648,13 @@ def test_decision_crafts():
     assert "票型" in vote_messages(game, seer, [2, 3])[1]["content"]
     assert "分票" in vote_messages(game, seer, [2, 3])[1]["content"]  # 好人防分票收敛纪律
     assert "刀口优先级" in wolf_proposal_messages(game, wolf)[1]["content"]
-    assert "管住嘴" in wolf_proposal_messages(game, wolf)[1]["content"]  # 自刀次日不声张银水
+    assert "按位置直觉" in wolf_proposal_messages(game, wolf)[1]["content"]  # 盲刀理由可直言位置直觉（银水认领纪律归 system 狼身份层）
     assert "查验优先级" in seer_messages(game, seer, [2, 3])[1]["content"]
     assert "值得救" in witch_save_messages(game, witch, 4, True)[1]["content"]
     assert "同守同救" in witch_save_messages(game, witch, 4, True)[1]["content"]  # 奶穿镜像提醒
     assert "果断" in witch_poison_messages(game, witch, [2, 3])[1]["content"]
     assert "确认度" in hunter_messages(game, seer, [2, 3])[1]["content"]
-    # 连守禁令是守卫 system 身份层机制；craft 只留策略（含独有的同守同救提示）
+    # 连守禁令由 system 规则段承载（身份层只留独有机制）；craft 只留策略（含独有的同守同救提示）
     assert "连续两晚" in system_prompt(game, guard)
     assert "同守同救" in guard_messages(game, guard, [2, 3])[1]["content"]
 

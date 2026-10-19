@@ -72,6 +72,7 @@ class Store:
                     "mode": g.mode,
                     "winner": g.winner,
                     "end_reason": g.end_reason,
+                    "has_summary": bool(g.summary),
                     "players": [
                         {"seat": p.seat, "name": p.name, "avatar": p.avatar, "is_human": p.is_human, "alive": p.alive}
                         for p in sorted(g.players, key=lambda x: x.seat)

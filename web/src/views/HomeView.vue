@@ -6,8 +6,19 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BoardEditor from '@/components/BoardEditor.vue'
 import SettingsModal from '@/components/SettingsModal.vue'
 import ReviewModal from '@/components/ReviewModal.vue'
-import { abortGame, createGame, deleteGame, fetchBoards, listGames, startGame, type BoardInfo, type GameMeta } from '@/api/game'
-import { fetchSettings, type AiPersona } from '@/api/settings'
+import {
+  abortGame,
+  createGame,
+  deleteGame,
+  fetchBoards,
+  fetchSummaryStatus,
+  generateSummary,
+  listGames,
+  startGame,
+  type BoardInfo,
+  type GameMeta,
+} from '@/api/game'
+import { fetchSettings, type AiPersona, type ModelPreset } from '@/api/settings'
 import { showToast } from '@/composables/toast'
 import { setBgmTrack } from '@/composables/useBgm'
 import { ROLE_LABELS } from '@/utils/feed'
@@ -31,9 +42,14 @@ const mode = ref<'normal' | 'god'>(localStorage.getItem(MODE_KEY) === 'god' ? 'g
 watch(mode, (m) => localStorage.setItem(MODE_KEY, m))
 const settingsOpen = ref(false)
 const reviewId = ref('')
+const reviewSection = ref<'stream' | 'summary'>('stream')
 const preferredRole = ref('')
 const sheriffEnabled = ref(false)
 const badgeSwallow = ref<'none' | 'single' | 'double'>('none')
+// 历史列表一键 AI 复盘：用第一个模型预设，后台生成，行内轮询状态
+const summaryPresets = ref<ModelPreset[]>([])
+const summaryPresetId = ref('')
+const summaryPollTimers = new Map<string, number>()
 
 watch(sheriffEnabled, (v) => {
   if (!v) badgeSwallow.value = 'none'
@@ -96,19 +112,91 @@ onMounted(() => {
   }
 })
 
-onBeforeUnmount(() => setBgmTrack(null))
+onBeforeUnmount(() => {
+  setBgmTrack(null)
+  for (const t of summaryPollTimers.values()) clearInterval(t)
+  summaryPollTimers.clear()
+})
 
 async function load() {
   try {
     const [b, s, g] = await Promise.all([fetchBoards(), fetchSettings(), listGames()])
     boards.value = b
     personas.value = s.personas
+    summaryPresets.value = s.presets ?? []
+    if (!summaryPresetId.value) summaryPresetId.value = summaryPresets.value[0]?.id ?? ''
     games.value = g
     if (!selectedBoardId.value && b.length) selectedBoardId.value = b[0].id
     if (!selectedPersonas.value.length) autoPickPersonas()
+    for (const m of games.value) {
+      if (m.summary_running) pollRowSummary(m)
+    }
   } catch (e) {
     showToast((e as Error).message)
   }
+}
+
+function stopRowSummaryPoll(gid: string) {
+  const t = summaryPollTimers.get(gid)
+  if (t !== undefined) {
+    clearInterval(t)
+    summaryPollTimers.delete(gid)
+  }
+}
+
+function pollRowSummary(g: GameMeta) {
+  if (summaryPollTimers.has(g.id)) return
+  const timer = window.setInterval(async () => {
+    try {
+      const r = await fetchSummaryStatus(g.id)
+      if (r.status === 'running') return
+      stopRowSummaryPoll(g.id)
+      g.summary_running = false
+      g.has_summary = Boolean(r.summary)
+      if (r.error) showToast(`AI 复盘生成失败：${r.error}`)
+      else if (r.summary) showToast('AI 复盘已生成')
+    } catch {
+      stopRowSummaryPoll(g.id)
+      g.summary_running = false
+    }
+  }, 3000)
+  summaryPollTimers.set(g.id, timer)
+}
+
+function onSummaryBtn(g: GameMeta) {
+  if (g.has_summary) {
+    openReview(g, 'summary')
+  } else {
+    genRowSummary(g)
+  }
+}
+
+function openReview(g: GameMeta, section: 'stream' | 'summary' = 'stream') {
+  reviewSection.value = section
+  reviewId.value = g.id
+}
+
+async function genRowSummary(g: GameMeta) {
+  if (g.summary_running) return
+  if (!summaryPresetId.value) {
+    showToast('尚无可用模型预设，请先在设置中添加')
+    return
+  }
+  g.summary_running = true
+  try {
+    await generateSummary(g.id, summaryPresetId.value)
+    pollRowSummary(g)
+  } catch (e) {
+    g.summary_running = false
+    showToast((e as Error).message)
+  }
+}
+
+function rowSummaryTitle(g: GameMeta): string {
+  if (g.summary_running) return '后台生成中，可离开本页'
+  if (g.has_summary) return '查看 AI 复盘分析'
+  const preset = summaryPresets.value.find((p) => p.id === summaryPresetId.value)
+  return preset ? `用模型「${preset.name}」生成复盘分析` : '生成复盘分析'
 }
 
 function boardWinnerLabel(g: GameMeta): string {
@@ -127,8 +215,15 @@ function winnerClass(g: GameMeta): string {
 
 function roleClass(role: string): string {
   if (role === 'werewolf') return 'wolf'
-  if (role === 'villager' || role === 'idiot') return 'civil'
+  if (role === 'villager') return 'civil'
   return 'god'
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function roleCount(roles: string[]): { role: string; n: number }[] {
@@ -200,6 +295,20 @@ async function onCreate() {
 
 function onRemove(g: GameMeta) {
   deleteTarget.value = g
+}
+
+async function onSettingsClosed() {
+  settingsOpen.value = false
+  // 设置里增删改过 AI 玩家后重拉，避免大厅名单与已选列表残留已删除的 id
+  try {
+    const s = await fetchSettings()
+    personas.value = s.personas
+    const ids = new Set(personas.value.map((p) => p.id))
+    selectedPersonas.value = selectedPersonas.value.filter((id) => ids.has(id))
+    if (!selectedPersonas.value.length) autoPickPersonas()
+  } catch {
+    /* 刷新失败不打断，下次进页会重拉 */
+  }
 }
 
 async function doRemove() {
@@ -435,9 +544,12 @@ async function doAbort() {
               <span class="winner-badge" :class="winnerClass(g)">{{ boardWinnerLabel(g) }}</span>
               {{ g.board_name }}
             </div>
-            <div class="game-sub">{{ g.created_at }}</div>
+            <div class="game-sub">{{ formatTime(g.created_at) }}</div>
           </div>
-          <button class="btn" @click="reviewId = g.id">复盘</button>
+          <button class="btn" :disabled="g.summary_running" :title="rowSummaryTitle(g)" @click="onSummaryBtn(g)">
+            {{ g.summary_running ? '分析生成中…' : g.has_summary ? '查看AI分析' : 'AI 复盘分析' }}
+          </button>
+          <button class="btn" @click="openReview(g)">复盘</button>
           <button class="btn danger" @click="onRemove(g)">删除</button>
         </div>
       </section>
@@ -470,8 +582,8 @@ async function doAbort() {
       @confirm="doRemove"
     />
 
-    <SettingsModal v-if="settingsOpen" @close="settingsOpen = false" />
-    <ReviewModal v-if="reviewId" :gid="reviewId" @close="reviewId = ''" />
+    <SettingsModal v-if="settingsOpen" @close="onSettingsClosed" />
+    <ReviewModal v-if="reviewId" :gid="reviewId" :initial-section="reviewSection" @close="reviewId = ''" />
   </div>
 </template>
 

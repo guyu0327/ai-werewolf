@@ -867,11 +867,18 @@ class GameRunner:
 
     async def _sheriff_speech(self, game: Game, p: Player, tag: str, explode_fut: asyncio.Future | None = None) -> bool:
         """警上竞选发言（宣言/平票加赛）。吞警徽规则开启时狼人可在此自爆：
-        狼人回合决策、真人按钮（任意发言间隙）、查杀触发三种入口。
+        狼人回合决策、真人按钮（任意发言间隙）、查杀触发三种入口；末轮独狼不参与回合决策。
         返回 True 表示本白天已因警上自爆结束并进入黑夜。"""
         swallow = explode_fut is not None
         text = ""
-        if swallow and not p.is_human and p.role == Role.WEREWOLF:
+        if (
+            swallow
+            and not p.is_human
+            and p.role == Role.WEREWOLF
+            and not self._lone_wolf(game)
+            and p.seat not in game.phase_ctx.setdefault("explode_decided", [])
+        ):
+            # 本阶段已被查杀触发权衡过的狼不再重复思考，直接进入竞选发言
             d = await self._decide(
                 game, p, SelfExplodeDecision, prompts.self_explode_campaign_messages(game, p), [], "self_explode"
             )
@@ -971,7 +978,12 @@ class GameRunner:
                     if await self._check_claim_explode(game, p.seat, text, explode_fut):
                         return
                 else:
-                    if p.role == Role.WEREWOLF:
+                    if (
+                        p.role == Role.WEREWOLF
+                        and not self._lone_wolf(game)
+                        and p.seat not in ctx.setdefault("explode_decided", [])
+                    ):
+                        # 本阶段已被查杀触发权衡过的狼不再重复思考，直接发言
                         d = await self._decide(
                             game, p, SelfExplodeDecision, prompts.self_explode_messages(game, p), [], "self_explode"
                         )
@@ -1002,12 +1014,25 @@ class GameRunner:
         self._emit(game, "host_line", {"text": "发言结束，请所有存活玩家投票。"})
         self._advance(game, Phase.VOTE, {"votes": {}})
 
+    @staticmethod
+    def _mark_explode_decided(game: Game, seat: int) -> None:
+        decided = game.phase_ctx.setdefault("explode_decided", [])
+        if seat not in decided:
+            decided.append(seat)
+
+    @staticmethod
+    def _lone_wolf(game: Game) -> bool:
+        """场上只剩一匹存活狼：自爆 = 0 狼当场好人胜，唯一翻盘路径是不爆后夜里刀人，AI 不再询问自爆。"""
+        return sum(1 for x in game.alive_players() if x.role == Role.WEREWOLF) <= 1
+
     async def _check_claim_explode(self, game: Game, speaker: int, text: str, explode_fut: asyncio.Future, campaign: bool = False) -> bool:
         """查杀触发自爆：发言以查杀/验狼句式点名存活 AI 狼时，被点名者在其回合外同时思考，
         谁先决意自爆谁结算（同批完成取座位号小者）。
 
         误触发无害（狼按实锤纪律答 false），返回 True 表示本白天已因自爆结束并进入黑夜。
         竞选发言阶段（campaign=True）触发的是吞警徽结算。
+        完成决策的狼记入 phase_ctx["explode_decided"]：其后续发言回合不再重复权衡（同一阶段只想一次）。
+        场上仅剩一匹存活狼时不触发（自爆 = 0 狼当场好人胜，问了也必答 false）。
         """
         apply = self._apply_campaign_explode if campaign else self._apply_explode
         wolves = [
@@ -1015,7 +1040,7 @@ class GameRunner:
             for seat in sorted(_claimed_wolf_seats(text))
             if game.player(seat).alive and not game.player(seat).is_human and game.player(seat).role == Role.WEREWOLF
         ]
-        if not wolves:
+        if not wolves or self._lone_wolf(game):
             return False
         tasks: dict[asyncio.Task, Player] = {
             asyncio.create_task(
@@ -1048,6 +1073,7 @@ class GameRunner:
                 winner: Player | None = None
                 for t in sorted(done, key=lambda t: tasks[t].seat):
                     d = t.result()
+                    self._mark_explode_decided(game, tasks[t].seat)
                     if d.explode:
                         winner = tasks.pop(t)
                         break

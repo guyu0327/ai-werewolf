@@ -173,20 +173,9 @@ def summary_messages(game: Game) -> list[dict]:
 
 DETAIL_DAYS = 1  # 当前天往前 N 个昼夜保留完整细节，更早的压成结局摘要
 
-# 老昼夜直接丢弃的事件：主持垫话、长篇发言、狼队讨论过程、票型明细以外的流程噪声
+# 老昼夜直接丢弃的事件：主持垫话、长篇发言、狼队讨论过程等流程噪声
+# （投票结果不压缩：每局仅几十字，跨天票型是「连续同票对」「警长归票复盘」等技巧的原料）
 _DIGEST_SKIP = {"host_line", "speech", "last_words", "sheriff_speech", "wolf_proposal", "speech_order", "sheriff_vote_cast"}
-
-
-def _vote_digest(ev: GameEvent) -> str:
-    """老昼夜的投票结果压成一行结局，票型明细只保留最近昼夜。"""
-    if ev.payload.get("tie"):
-        return "白天投票：平票，无人出局。"
-    exiled = ev.payload.get("exiled")
-    if exiled is None:
-        return "白天投票：无人出局。"
-    if ev.payload.get("idiot_survived"):
-        return f"白天投票：放逐 {exiled}号，翻牌是【白痴】免死，失去投票权。"
-    return f"白天投票：放逐 {exiled}号（{ev.payload.get('role') or '不翻牌'}）。"
 
 
 def render_history(game: Game, seat: int) -> str:
@@ -221,7 +210,7 @@ def render_history(game: Game, seat: int) -> str:
         if ev.day < detail_from:
             if ev.type in _DIGEST_SKIP:
                 continue
-            text = _vote_digest(ev) if ev.type == "vote_result" else render_event(game, ev)
+            text = render_event(game, ev)
         else:
             text = render_event(game, ev)
         if text:
@@ -248,7 +237,7 @@ def _board_line(game: Game) -> str:
     win = (
         "屠城局（狼人需杀光全部好人：存活狼数不少于存活好人数即狼胜）"
         if game.board.win_condition == WinCondition.CITY
-        else "屠边局（狼人杀光全部神职、或杀光全部村民即狼胜；白痴归村民侧）"
+        else "屠边局（狼人杀光全部神职、或杀光全部村民即狼胜；白痴属神职侧）"
     )
     return (
         f"本局共 {len(game.players)} 名玩家。板子配置：{game.board.name}，{win}。"
@@ -261,7 +250,9 @@ def system_prompt(game: Game, player: Player) -> str:
     label = ROLE_LABELS.get(role, "?") if role else "?"
     lines = [
         f"你是「{player.name}」，正在和其他玩家玩一局狼人杀。",
-        f"你的性格设定：{player.persona or '普通玩家'}。发言和决策都要符合这个设定。",
+        f"你的性格设定：{player.persona or '普通玩家'}。它只影响你发言的语气与用词风格；"
+        "所有决策（投票、技能、上警、自爆等）与性格无关，一律按局势和阵营胜率理性做出，"
+        "不要为了让选择贴合人设而偏离策略。",
         f"你的座位是 {player.seat}号。你的秘密身份是：{label}。",
         _board_line(game),
         "节奏要求：这是实时对局，所有玩家都在等你的行动。无论发言、投票还是用技能，"
@@ -285,32 +276,25 @@ def system_prompt(game: Game, player: Player) -> str:
         lines.append(
             "你是女巫，拥有一瓶解药和一瓶毒药（整局各限一次，同一晚只能用一瓶，不能自救）。"
             "解药可以救活当晚被袭击的玩家；毒药可以毒死一名玩家。用药信息完全保密，"
-            "白天以逻辑发言为主，不主动暴露药型，不要说「我是神」这类容易送刀的话。"
+            "白天以逻辑发言为主，平时不主动暴露药型——亮牌的时机与代价自行权衡。"
         )
     elif role == Role.HUNTER:
         lines.append(
-            "你是猎人，当你出局时（被毒杀除外）可以开枪带走一名玩家。是否开枪、带谁由你决定，平时藏好身份。"
+            "你是猎人，出局时可以开枪带走一名玩家。是否开枪、带谁由你决定，平时藏好身份。"
         )
     elif role == Role.GUARD:
-        lines.append(
-            "你是守卫，每晚可以守护一名玩家（包括自己），被守护的玩家当晚不会被狼刀杀（守护不防毒药）。"
-            "你不能连续两晚守护同一名玩家。若同晚既守护又被女巫救（同守同救），玩家仍会死亡。"
-        )
+        lines.append("你是守卫，每晚可以守护一名玩家（包括自己），被守护的玩家当晚不会被狼刀杀。")
     elif role == Role.VILLAGER:
         lines.append("你是普通村民，没有夜间技能。靠听发言、看票型找出狼人，用投票保护好人阵营。")
     elif role == Role.IDIOT:
-        lines.append(
-            "你是白痴，平时和村民一样没有夜间技能。"
-            "若你白天被投票放逐，会翻牌亮明白痴身份并免死，但从此失去投票权，仍可继续发言；"
-            "若再次被放逐或夜晚被害，你就会真正出局。"
-        )
+        lines.append("你是白痴，属神职阵营（屠边局里算神职侧），平时和村民一样没有夜间技能。")
 
     lines.append(
         "规则：夜晚守卫守护、狼人刀人、预言家验人、女巫用药；白天全员依次发言后投票放逐一人（平票无人出局）；"
         "守卫守护只防刀不防毒，同守同救仍死，不能连续两晚守同一人；"
         "对局中出局不翻牌（白痴被放逐翻牌免死除外），游戏结束后公开所有身份；猎人出局可开枪（被毒除外）；"
         "狼人白天发言阶段可自爆：翻牌亮明狼人身份立即出局（无遗言），当天发言立即结束直接入夜，狼队当晚照常行动；"
-        "白痴被投票放逐时翻牌免死并失去投票权（夜晚被害或再次被放逐则真出局）；"
+        "白痴被投票放逐时翻牌免死并失去投票权、仍留在场上发言（夜晚被害或再次被放逐则真出局）；"
         "遗言：只有第一晚夜晚死亡的玩家与被放逐者有遗言，其余死亡没有遗言。"
         "他人的身份声称只是口头声明，翻牌才算公开确认，被投票出局也不等于验明是狼。"
         "引用别人的发言要给对天数和座位号，不要编造别人没说过的话。"
@@ -488,7 +472,7 @@ def vote_messages(game: Game, player: Player, candidates: list[int]) -> list[dic
     return _messages(
         game,
         player,
-        f'请投票放逐一人；如果暂时没有把握，也可以弃票。{craft}输出 JSON：{{"target": 座位号（弃票填 0）, "reason": "简短投票理由"}}。',
+        f'请投票放逐一人（可弃票，弃票填 0）。{craft}输出 JSON：{{"target": 座位号（弃票填 0）, "reason": "简短投票理由"}}。',
         extra,
     )
 
@@ -594,7 +578,7 @@ def self_explode_trigger_messages(game: Game, wolf: Player, speech_seat: int, te
         wolf,
         f"刚结束的{stage}里，{speech_seat}号 说：「{text[:120]}」。你现在可以立即自爆"
         f"（无需等你的发言回合）。{craft}"
-        "注意：对方只是口头声称，若并不构成你的实锤，就否认并继续游戏。"
+        "注意：自爆的判断依据是局势，不是对方说得像不像真的；若对方并无查杀力度只是空口施压，同样否认并继续游戏。"
         '输出 JSON：{"explode": true/false}。',
     )
 

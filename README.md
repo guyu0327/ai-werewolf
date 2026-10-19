@@ -42,20 +42,29 @@
 
 ## 快速开始
 
-环境要求：Node.js 18+、Python 3.11+（Windows / macOS / Linux 均可）。
+环境要求：Node.js 18+；后端 Python 由虚拟环境管理——推荐装 [uv](https://docs.astral.sh/uv/)（单文件工具，自带 Python 下载，**无需系统 pip**；macOS 上系统的 `python3` 常是 Xcode 桩，没有 pip，别直接用它装依赖）。
 
 ```bash
+# 0. 安装 uv（二选一）
+#    macOS:   brew install uv
+#    Windows: winget install astral-sh.uv   （或 pip install uv）
+
 # 1. 安装前端依赖并构建
 npm install
 npm --prefix web install
 npm run build:web
 
-# 2. 安装后端依赖
-pip install -r backend/requirements.txt
+# 2. 创建后端虚拟环境并安装依赖（uv 会自动下载所需 Python）
+cd backend
+uv venv --python 3.12
+uv pip install -r requirements.txt
+cd ..
 
-# 3. 启动（Electron 拉起后端 + 桌面窗口）
+# 3. 启动（自动识别 backend/.venv，无需激活环境）
 npm start
 ```
+
+不用 uv 也可以：`cd backend && python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt`（Windows 把 `.venv/bin` 换成 `.venv/Scripts`）。`npm start` 每次启动都会优先探测 `backend/.venv`，探测不到才回退系统 Python。
 
 启动后进入设置页：
 
@@ -86,12 +95,14 @@ python scripts/smoke_play.py --god    # 上帝观战局
 ```bash
 npm run dist         # Windows NSIS 安装包 → dist/ai-werewolf-setup-<版本>.exe
 npm run dist:dir     # 免安装目录版 → dist/win-unpacked/
-# macOS: npm run dist:mac
+npm run dist:mac     # macOS DMG（必须在 macOS 上构建）→ dist/
+npm run dist:mac:dir # macOS 免安装目录版
 ```
 
 - 安装包为向导式（可选安装目录，按用户安装，无需管理员权限）
 - 打包内容：Electron 壳 + 前端产物（`resources/web/dist`）+ 后端（`resources/server`）
-- `npm run dist` / `dist:dir` 会先自动执行 `build:web` + `build:server`：后端经 PyInstaller 打成 `server.exe` 一并装入安装目录，目标机器**完全免 Python 环境**（运行时检测到 exe 优先使用；无 exe 时回退源码副本，此时需本机 Python 3.11+ 与后端依赖）
+- `npm run dist` / `dist:dir` / `dist:mac` / `dist:mac:dir` 会先自动执行 `build:web` + `build:server`：后端经 PyInstaller 打成独立可执行文件（Windows 为 `server.exe`，macOS 为 `server`）一并装入安装目录，目标机器**完全免 Python 环境**（运行时按平台检测对应产物优先使用；无产物时回退源码副本，此时需本机 Python 3.11+ 与后端依赖）
+- Mac 包必须在 macOS 上构建（PyInstaller 不支持交叉编译）；构建机的 Python 需先 `pip install pyinstaller`（uv 环境则 `uv pip install pyinstaller`），打包脚本用 PATH 上的 `python`
 - 应用数据（对局存档 / 设置 / API Key）固定在用户目录 `%APPDATA%/ai-werewolf`，与开发目录隔离，卸载不删除
 
 ## 项目结构

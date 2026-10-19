@@ -10,7 +10,7 @@ import { fetchSettings, type ModelPreset } from '@/api/settings'
 import { mapEvent, ROLE_LABELS, type FeedItem } from '@/utils/feed'
 import { showToast } from '@/composables/toast'
 
-const props = defineProps<{ gid: string }>()
+const props = defineProps<{ gid: string; initialSection?: 'stream' | 'summary' }>()
 const emit = defineEmits<{ close: [] }>()
 
 const game = ref<Record<string, any> | null>(null)
@@ -19,7 +19,7 @@ const selectedSeat = ref<number | null>(null)
 const presets = ref<ModelPreset[]>([])
 const presetId = ref('')
 // 总结与事件流互斥展开：点头部展开并把另一个收起；再点展开中的那个则切换到另一个
-const expanded = ref<'stream' | 'summary'>('stream')
+const expanded = ref<'stream' | 'summary'>(props.initialSection === 'summary' ? 'summary' : 'stream')
 
 function toggleSection(s: 'stream' | 'summary') {
   expanded.value = expanded.value === s ? (s === 'summary' ? 'stream' : 'summary') : s
@@ -122,7 +122,7 @@ onUnmounted(stopPoll)
 
 function roleClass(role: string | null): string {
   if (role === 'werewolf') return 'wolf'
-  if (role === 'villager' || role === 'idiot') return 'villager'
+  if (role === 'villager') return 'villager'
   return 'god'
 }
 

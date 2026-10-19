@@ -26,7 +26,8 @@ ROLE_LABELS: dict[Role, str] = {
     Role.GUARD: "守卫",
 }
 
-GOD_ROLES = {Role.SEER, Role.WITCH, Role.HUNTER, Role.GUARD}
+# 白痴属神职：屠边局的「神职侧」以 GOD_ROLES 为准（翻牌免死后仍存活的白痴同样撑住神桶）
+GOD_ROLES = {Role.SEER, Role.WITCH, Role.HUNTER, Role.GUARD, Role.IDIOT}
 
 
 class WinCondition(str, Enum):
