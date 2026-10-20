@@ -187,8 +187,15 @@ function createTray(win) {
   const icon = process.platform === 'win32' ? 'icon.ico' : 'icon.png'
   const iconPath = app.isPackaged ? path.join(RESOURCE_ROOT, icon) : path.join(__dirname, 'build', icon)
   if (!fs.existsSync(iconPath)) return
-  const trayImage = nativeImage.createFromPath(iconPath)
-  if (process.platform !== 'win32') trayImage.resize({ height: 22 })
+  const source = nativeImage.createFromPath(iconPath)
+  // Windows：沿用原始 .ico（内含多档尺寸，由系统按 DPI 自选），行为与此前一致
+  // macOS：菜单栏图标逻辑高度 22pt。原始 512px 直接塞进托盘会撑爆菜单栏，
+  //   且 nativeImage.resize() 返回新对象、不就地修改，必须接住返回值。
+  //   这里按 2 倍位图（44px）生成并声明 scaleFactor 2，Retina 下边缘才不发虚。
+  const trayImage =
+    process.platform === 'win32'
+      ? source
+      : nativeImage.createFromBuffer(source.resize({ height: 44 }).toPNG(), { scaleFactor: 2 })
   tray = new Tray(trayImage)
   tray.setToolTip('AI 狼人杀')
   // 每次右键重建菜单，radio 项才能反映当前关闭偏好
