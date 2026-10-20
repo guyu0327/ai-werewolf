@@ -1,8 +1,12 @@
 # AI 狼人杀 🐺🌙
 
+[![Release](https://img.shields.io/github/v/release/guyu0327/ai-werewolf?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/guyu0327/ai-werewolf/releases/latest) [![Downloads](https://img.shields.io/github/downloads/guyu0327/ai-werewolf/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F)](https://github.com/guyu0327/ai-werewolf/releases/latest)
+
 天黑请闭眼 —— 与 AI 们同桌博弈的狼人杀桌面游戏。
 
 你将亲自上场，与多个各有人设、各用不同大模型的 AI 玩家同桌对局：发言、投票、夜晚行动全部由大模型驱动；也可以切换**上帝观战**，看一桌纯 AI 自相残杀，全程思考过程可见。
+
+![大厅](docs/lobby.png)
 
 ## 功能特性
 
@@ -81,7 +85,7 @@ npm start
 npm run dev:web
 npm run dev:server
 
-# 后端单测（88 个用例：引擎规则 / 整局流程 / 信息隔离 / 警长竞选 / 自爆 / LLM 失败暂停 / 语音中继…）
+# 后端单测（91 个用例：引擎规则 / 整局流程 / 信息隔离 / 警长竞选 / 自爆 / LLM 客户端降级链 / LLM 失败暂停 / 语音中继…）
 npm run test:server
 
 # 不接真实模型跑通整局：本地 mock LLM + 双模式端到端冒烟
@@ -95,14 +99,15 @@ python scripts/smoke_play.py --god    # 上帝观战局
 ```bash
 npm run dist         # Windows NSIS 安装包 → dist/ai-werewolf-setup-<版本>.exe
 npm run dist:dir     # 免安装目录版 → dist/win-unpacked/
-npm run dist:mac     # macOS DMG（必须在 macOS 上构建）→ dist/
+npm run dist:mac     # macOS DMG（必须在 macOS 上构建）→ dist/AIWerewolf-<版本>-<架构>.dmg
 npm run dist:mac:dir # macOS 免安装目录版
 ```
 
 - 安装包为向导式（可选安装目录，按用户安装，无需管理员权限）
 - 打包内容：Electron 壳 + 前端产物（`resources/web/dist`）+ 后端（`resources/server`）
 - `npm run dist` / `dist:dir` / `dist:mac` / `dist:mac:dir` 会先自动执行 `build:web` + `build:server`：后端经 PyInstaller 打成独立可执行文件（Windows 为 `server.exe`，macOS 为 `server`）一并装入安装目录，目标机器**完全免 Python 环境**（运行时按平台检测对应产物优先使用；无产物时回退源码副本，此时需本机 Python 3.11+ 与后端依赖）
-- Mac 包必须在 macOS 上构建（PyInstaller 不支持交叉编译）；构建机的 Python 需先 `pip install pyinstaller`（uv 环境则 `uv pip install pyinstaller`），打包脚本用 PATH 上的 `python`
+- Mac 包必须在 macOS 上构建（PyInstaller 不支持交叉编译）；构建机需先装 PyInstaller：`uv pip install --python backend/.venv/bin/python pyinstaller`（Windows 把 `.venv/bin` 换成 `.venv/Scripts`）。所有需要 Python 的 npm script（`dev:server` / `build:server` / `test:server`）统一经 `scripts/run_backend.mjs` 执行：优先用 `backend/.venv` 的解释器，探测不到所需模块才回退 PATH 上的 `python`
+- Mac 包无需 Apple 开发者证书（ad-hoc 签名），首次打开需在「系统设置 → 隐私与安全性」点「仍要打开」；想要分发零提示需 Developer ID 证书 + 公证
 - 应用数据（对局存档 / 设置 / API Key）固定在用户目录 `%APPDATA%/ai-werewolf`，与开发目录隔离，卸载不删除
 
 ## 项目结构
@@ -122,7 +127,8 @@ ai-werewolf/
 │   │   └── routes/                    # games / settings / stream / voice
 │   └── tests/                         # 引擎 / 整局 / 语音单测
 ├── web/                               # Vue3 前端（牌桌 / 大厅 / 设置 / 复盘）
-├── scripts/                           # mock LLM + 端到端冒烟 + 讯飞凭证加密脚本
+├── scripts/                           # run_backend.mjs（跨平台后端入口）+ mock LLM + 端到端冒烟 + 讯飞凭证加密脚本
 ├── build/                             # 应用图标
+├── docs/                              # README 配图
 └── data/                              # 运行时数据（不入库）
 ```
