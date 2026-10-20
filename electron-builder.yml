@@ -37,3 +37,19 @@ mac:
   # Mac 包必须在 macOS 上构建（PyInstaller 不能交叉编译，dist:mac 会先产出 mac 版 server 再打包）
   target: dmg
   category: public.app-category.games
+  # 显式 ad-hoc 签名（不是「跳过签名」）。
+  # 原因：arm64 上未签名的 App 会被内核直接拒绝启动；而 electron-builder 在找不到证书时
+  # 默认「跳过签名」，产出的包在本机也打不开。ad-hoc 让 App 在任何 Mac 上都能通过
+  # 「系统设置 → 隐私与安全性 → 仍要打开」放行，且不绑定构建机的证书/Apple ID。
+  # 想要分发零提示，需 Apple Developer ID 证书（99 美元/年）+ 公证。
+  identity: "-"
+  # ad-hoc 签名下开启 hardenedRuntime 会启用库校验，Electron 框架与内置后端易被拦，
+  # 关掉更稳（没走公证流程，hardened runtime 没有收益）
+  hardenedRuntime: false
+  extendInfo:
+    # Electron 自带的是英文占位文案，系统麦克风授权弹窗会原样展示，这里换成中文
+    NSMicrophoneUsageDescription: AI 狼人杀需要使用麦克风，把你的语音转写为发言文字。
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # 不写 contents：electron-builder 默认就是「左边 app + 右边 Applications 快捷方式」的拖拽安装布局
+
